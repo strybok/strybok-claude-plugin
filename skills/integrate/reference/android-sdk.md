@@ -31,7 +31,7 @@ The library is on Maven Central. In `app/build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.strybok:strybok-android:0.2.0")
+    implementation("com.strybok:strybok-android:0.3.0")
 }
 ```
 
@@ -278,13 +278,14 @@ Listeners and callbacks run on the main thread unless you set `callbackExecutor`
 | `isStrybokUrl(url)`                      | Whether a URL is one of this app's links.                                                                                                               |
 | `createLink(routePath, …)`               | Suspends; makes a short link to a screen of the app. See [Create a link to share](#9-create-a-link-to-share).                                           |
 | `stop()`                                 | Stop for good; nothing is delivered afterwards. Not needed for a process-wide instance.                                                                 |
-| `Strybok.SDK_VERSION`                    | `"0.2.0"`.                                                                                                                                              |
+| `Strybok.SDK_VERSION`                    | `"0.3.0"`.                                                                                                                                              |
 
 `StrybokConfig` options: `timeoutMillis` (5000 per attempt), `maxRetries` (2; only timeouts,
 network errors and 5xx are retried — resolving is an idempotent GET), `retryDelayMillis` (400,
 doubles per retry), `dedupeWindowMillis` (2000), `reportAppOpens` (`true`), `onError`,
-`clientKey` (only for `createLink`), plus `transport` and `callbackExecutor` for tests and custom
-HTTP stacks.
+`clientKey` (only for `createLink`), `attestation` and `integrityTokenProvider` (only for
+`createLink`, see [Extra protection](#extra-protection)), plus `transport` and `callbackExecutor`
+for tests and custom HTTP stacks.
 
 ### Errors
 
@@ -463,6 +464,114 @@ Things to know:
   them.
 - In tests, answer the `POST …/v1/public/links` request in your `transport` with
   `StrybokHttpResponse(201, """{"linkId":"l1","url":"https://my-app.strybok.link/abc","slug":"abc","routePath":"/product/42"}""")`.
+
+### Extra protection
+
+The publishable key can be copied out of your app, so anyone can create links for the routes you
+allowed. If that matters to you, the owner of the application can ask Strybok to accept link
+requests only — or preferably — from a **genuine build of your app on a genuine device**. On
+Android the proof is Google **Play Integrity**. What this does and does not protect, and the
+dashboard side, are described in
+[Keeping link creation from your app safe](./link-creation-security.md); read
+[its limits](./link-creation-security.md#the-limits) before you rely on it.
+
+It is off by default, and the SDK does not depend on Google's libraries: an app for a market
+without Google Play uses the same artifact and simply does not switch this on.
+
+**Set-up** (details and the reasons are in the security guide):
+
+1. Dashboard → your application: fill in the **package name** and the **SHA-256 fingerprints of
+   your signing certificates** (with Play App Signing, the _app signing key_ certificate from
+   Play Console → **Test and release** → **App integrity**, not your upload key).
+2. [Google Cloud console](https://console.cloud.google.com/): choose or create a project and
+   enable the **Google Play Integrity API**. Note the **project number** (a number, not the
+   project id).
+3. [Play Console](https://play.google.com/console/): your app → **Test and release** → **App
+   integrity** → **Play Integrity API** → **link that Cloud project**.
+4. Cloud console → **IAM & Admin** → **Service Accounts**: create a service account only for
+   this purpose, with only the roles Google's Play Integrity documentation asks for, and create
+   a **JSON key** for it.
+5. Dashboard → **Setup** → **Links from the app** → **Extra protection (optional)** →
+   **Android — Play Integrity** → **Upload Google key**, then delete the downloaded file. Choose
+   the mode: **Preferred** first; **Required** only after you have seen your released app pass.
+6. In the app, add Google's library yourself and switch attestation on:
+
+```kotlin
+// build.gradle.kts of the app
+dependencies {
+    implementation("com.strybok:strybok-android:0.3.0")
+    implementation("com.google.android.play:integrity:1.4.0") // or newer; not pulled in by the SDK
+}
+```
+
+```kotlin
+val strybok = Strybok(
+    StrybokConfig(
+        apiBaseUrl = "https://api.strybok.com",
+        allowedHosts = setOf("my-app.strybok.link"),
+        clientKey = "pk_…",
+        attestation = true,
+        integrityTokenProvider = PlayIntegrityTokenProvider(
+            context = applicationContext,
+            cloudProjectNumber = 123456789012L, // the Cloud project number from step 2
+        ),
+    ),
+)
+```
+
+Java: `new StrybokConfig.Builder(…).clientKey("pk_…").attestation(true).integrityTokenProvider(new PlayIntegrityTokenProvider(context, 123456789012L)).build()`.
+
+7. Test with a build **installed from Google Play** (an internal testing track is enough). A
+   build installed from Android Studio is not "recognised by Play" and is refused.
+
+`createLink` is called exactly as before. The first call — and about one call an hour after
+that — first asks the service for a one-time challenge, asks Google Play for an integrity token
+bound to it and exchanges that for a session token, which is kept in memory only. Nothing of
+this happens when the SDK starts or when a link arrives, and never ahead of time.
+
+Two more errors can come out of `createLink`:
+
+| Error                                 | Meaning                                                                                                                                                                                                                                                     | Retrying helps |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `StrybokAttestationRequiredException` | The mode is **Required** and this request carried no proof: the device or build cannot attest (see the limits), or `attestation` is off. Expected on such devices — tell the user that sharing is not available here rather than show an error.             | no             |
+| `StrybokAttestationFailedException`   | The service refused the session token, the SDK attested again, and the fresh token was refused too. `reason` is `invalid`, `expired` or `exhausted` when the service gave one. Should not happen in a correctly set-up release; check the dashboard set-up. | no             |
+
+**When a device cannot attest** — no Google Play services or Play Store, the library is not in
+the app, Google's quota is used up, a network failure, or the dashboard set-up is incomplete —
+the SDK does not fail on its own. It sends the request without a proof and reports what the
+service answers: the link (mode **Off**, or **Preferred** within the small shared allowance),
+`StrybokRateLimitedException` (that allowance is used up) or
+`StrybokAttestationRequiredException` (mode **Required**). It then waits 60 seconds before it
+tries to attest again. Attestation never affects receiving links and never throws anything but
+the `StrybokException`s of `createLink`.
+
+**Without Google Play.** `integrityTokenProvider` is a small interface
+(`StrybokIntegrityTokenProvider`: given the request hash, return a Play Integrity token or
+`null`). `PlayIntegrityTokenProvider` is the ready-made implementation; it only works when the
+app itself adds `com.google.android.play:integrity`, and reports "cannot attest" (with one
+warning in logcat) when the library is missing. For a build flavour that must not contain
+Google libraries, leave the dependency out and pass `integrityTokenProvider = null`: nothing of
+Google is referenced or downloaded. An app that already uses Play Integrity can implement the
+interface on top of its own code instead; the request must be a **standard** request with the
+given `requestHash`.
+
+**The limits, plainly:**
+
+- It needs **Google Play services, the Play Store and a build installed from Google Play**. It
+  does not work on devices without Google services — most devices sold in mainland China,
+  Huawei devices without Google Mobile Services — or for sideloaded builds and builds from
+  other stores. With mode **Required** those users cannot create links at all.
+- **Google limits how often you can ask**: 10,000 integrity requests a day per app by default; a
+  higher tier has to be requested from Google. The SDK asks about once an hour per running app
+  (more often when a token is used up after 30 new links).
+- Strybok needs a **Google service-account key** of yours to read the verdicts.
+- It raises the cost of abuse; it does not stop a real user of the real app, and a proof can be
+  taken from a device an attacker controls.
+- **This code has never run against Google's real service or on a physical device.** It is
+  covered by unit tests with a fake token provider and a fake service only; the calls into
+  Google's library (`PlayIntegrityTokenProvider`) compile against it and are otherwise
+  unverified. Treat **Required** as experimental until you have seen your own released build
+  pass.
 
 ## Troubleshooting
 

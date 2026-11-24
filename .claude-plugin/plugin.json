@@ -1,0 +1,10 @@
+{
+  "name": "strybok",
+  "description": "Integrate Strybok deep links (iOS Universal Links, Android App Links) into a Flutter, React Native, Expo, Capacitor, iOS, Android, Kotlin Multiplatform, Unity, .NET MAUI or Unreal project.",
+  "version": "0.1.0",
+  "author": { "name": "Strybok" },
+  "homepage": "https://strybok.com",
+  "repository": "https://github.com/strybok/strybok-claude-plugin",
+  "license": "Apache-2.0",
+  "keywords": ["deep-links", "universal-links", "app-links", "mobile", "strybok"]
+}

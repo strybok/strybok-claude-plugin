@@ -1,0 +1,12 @@
+{
+  "name": "strybok",
+  "owner": { "name": "Strybok" },
+  "description": "The Strybok plugin for Claude Code: integrate Strybok deep links into a mobile app project.",
+  "plugins": [
+    {
+      "name": "strybok",
+      "source": "./",
+      "description": "Integrate Strybok deep links into a mobile app project: SDK, native configuration, link handling wired to the app's router, optional share links."
+    }
+  ]
+}

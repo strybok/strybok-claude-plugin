@@ -13,11 +13,12 @@ Supported projects: Flutter, React Native and Expo, Capacitor and Ionic, native 
 native Android (Kotlin / Java), Kotlin Multiplatform, and, as experimental SDKs, Unity, .NET MAUI
 and Unreal Engine.
 
-> **Status:** version 0.1.0. The skill has been checked against the format rules and against
+> **Status:** version 0.2.0. The skill has been checked against the format rules and against
 > Strybok's own example app, but it has **not yet been exercised on third-party projects**.
 > Review the plan it shows and the diff it produces. No Strybok SDK has been verified on physical
-> devices yet, and deferred deep linking (restoring a link after a store install) is not
-> supported.
+> devices yet. Deferred deep linking (restoring a link after a store install) is optional, off
+> by default and not verified on a device; the skill only adds it when you ask, and on iOS there
+> is no automatic way.
 
 ## Install
 

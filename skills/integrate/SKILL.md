@@ -142,8 +142,8 @@ to them:
   public client key, the built-in limits and the optional attestation (App Attest, Play
   Integrity) with its limits. Read it before adding `createLink`.
 - [reference/sdk-contract.md](reference/sdk-contract.md): the behaviour all SDKs share (which
-  URLs are accepted, delivery exactly once, errors, `createLink`). Read it when something is
-  unclear or the user asks how it works.
+  URLs are accepted, delivery exactly once, errors, `createLink`, campaign values, deferred
+  links). Read it when something is unclear or the user asks how it works.
 - [reference/manual-test-plan.md](reference/manual-test-plan.md): the device scenarios to hand
   to the user at the end.
 
@@ -153,24 +153,36 @@ host and API base URL.
 
 ### Maturity: tell the user before you start
 
-Deferred deep linking is **not supported** by any Strybok SDK: a link tapped before the app is
-installed is not restored after installation. If the user is replacing Firebase Dynamic Links and
-relies on that, say it now.
+Deferred deep linking (restoring a link that was tapped before the app was installed) is
+**optional, off by default and not verified on any device or against any real store**. A normal
+integration does not include it. If the user is replacing Firebase Dynamic Links and relies on
+it, say this now:
+
+- **Android:** possible through the store's install referrer (Google Play; Huawei AppGallery and
+  Samsung Galaxy Store are unverified), only for installs from the store page the link opened.
+- **iOS:** nothing is automatic. The only ways are a link the person copies before the App Store
+  and pastes in the app, or opt-in probabilistic matching, which Apple's rules forbid.
+- It needs an SDK version that has the `deferredLinks` option (the last column below). If the
+  installed version has no such option, it is not available: do not improvise it.
 
 No SDK has been verified on physical devices yet. On top of that:
 
-| Platform             | Status to pass on                                                                                                                                                                              | Link creation (`createLink`) |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| Flutter              | Early release, on pub.dev, unit and widget tests.                                                                                                                                              | yes                          |
-| Native iOS           | Unit tests on macOS and the iOS Simulator.                                                                                                                                                     | yes                          |
-| Native Android       | Early release, on Maven Central, JVM unit tests.                                                                                                                                               | yes                          |
-| Kotlin Multiplatform | Early release, on Maven Central; not tried inside a complete Compose Multiplatform app.                                                                                                        | yes                          |
-| React Native / Expo  | Unit tests with a fake `Linking` module; never run inside a real React Native or Expo app. The Expo Router snippet is a sketch.                                                                | yes                          |
-| Capacitor            | Unit tests with fake plugins; never run inside a real Capacitor app.                                                                                                                           | yes                          |
-| JavaScript core      | Unit tests; you must supply the `LinkSource` for the runtime.                                                                                                                                  | yes                          |
-| **Unity**            | **Experimental.** Edit Mode tests only; not run on a device or simulator, not run on Unity 2021.3 / 2022.3; installed from a git URL, not from a registry.                                     | yes (0.2.0)                  |
-| **.NET MAUI**        | **Experimental.** The core library is tested; the MAUI glue has only been compiled, never run inside a MAUI app, and the guide's code samples were not compiled.                               | yes (0.2.0)                  |
-| **Unreal Engine**    | **Experimental.** Never compiled with Unreal Build Tool and never run on a device; only the engine-independent core is tested. Expect compile errors; the guide ends with a "Known gaps" list. | yes (0.2.0), uncompiled      |
+| Platform             | Status to pass on                                                                                                                                                                              | Link creation (`createLink`) | Deferred links (optional, unverified)                     |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | --------------------------------------------------------- |
+| Flutter              | Early release, on pub.dev, unit and widget tests.                                                                                                                                              | yes                          | from 0.3.0; the app supplies referrer, pasted text, store |
+| Native iOS           | Unit tests on macOS and the iOS Simulator.                                                                                                                                                     | yes                          | from 0.4.0: pasted link, opt-in matching                  |
+| Native Android       | Early release, on Maven Central, JVM unit tests.                                                                                                                                               | yes                          | from 0.4.0, store referrer sources included               |
+| Kotlin Multiplatform | Early release, on Maven Central; not tried inside a complete Compose Multiplatform app.                                                                                                        | yes                          | from 0.4.0, both platforms                                |
+| React Native / Expo  | Unit tests with a fake `Linking` module; never run inside a real React Native or Expo app. The Expo Router snippet is a sketch.                                                                | yes                          | from 0.3.0; the app supplies referrer, pasted text, store |
+| Capacitor            | Unit tests with fake plugins; never run inside a real Capacitor app.                                                                                                                           | yes                          | from 0.3.0; the app supplies referrer, pasted text, store |
+| JavaScript core      | Unit tests; you must supply the `LinkSource` for the runtime.                                                                                                                                  | yes                          | from 0.3.0; the app supplies referrer, pasted text, store |
+| **Unity**            | **Experimental.** Edit Mode tests only; not run on a device or simulator, not run on Unity 2021.3 / 2022.3; installed from a git URL, not from a registry.                                     | yes (0.2.0)                  | from 0.3.0; the app supplies the referrer and pasted text |
+| **.NET MAUI**        | **Experimental.** The core library is tested; the MAUI glue has only been compiled, never run inside a MAUI app, and the guide's code samples were not compiled.                               | yes (0.2.0)                  | from 0.3.0; the app supplies the referrer and pasted text |
+| **Unreal Engine**    | **Experimental.** Never compiled with Unreal Build Tool and never run on a device; only the engine-independent core is tested. Expect compile errors; the guide ends with a "Known gaps" list. | yes (0.2.0), uncompiled      | from 0.3.0, uncompiled; the game supplies both from C++   |
+
+A version named here may not be published yet: check what the registry really offers (step 4a).
+Attestation of `createLink` (App Attest, Play Integrity) exists only in the native iOS, native
+Android and Kotlin Multiplatform SDKs, from 0.3.0.
 
 For the three experimental SDKs, get an explicit "go ahead" from the user after telling them
 this.
@@ -340,6 +352,42 @@ as the rest of them; the Unreal module, including this call, has never been comp
    secret `lb_…` key is never accepted by `createLink` and must never be used here.
 4. Do not put personal data in a route or payload: whoever receives the link can read them.
 
+## Optional: campaign values and deferred links
+
+Do either only when the user asks. The platform guide is the source of every name; if the
+installed SDK version lacks the API, say so and stop.
+
+**Campaign values (UTM).** From SDK 0.3.0 (native iOS, native Android and Kotlin Multiplatform:
+0.4.0) every delivered link has a `campaign` object (source, medium, campaign, term, content)
+taken from the link's defaults and the `utm_*` parameters of the tapped URL; the guide shows how
+to read it. They are labels chosen by whoever shared the link: use them for analytics, never
+for access, discounts or anything that matters.
+
+**Deferred links.** Read the guide's "Deferred links" section completely, and the sections on
+links tapped before the app is installed in [reference/android.md](reference/android.md) and
+[reference/ios.md](reference/ios.md), before planning. Then:
+
+1. Repeat the limits from step 2 and get an explicit "go ahead". Nothing of this has run on a
+   device; never write that it works.
+2. The owner switches it on per application in the dashboard (the guides name the settings);
+   you do not change the dashboard.
+3. **Android:** set the SDK's `deferredLinks` option and the referrer sources the guide shows,
+   and add the store's install-referrer library the guide names. SDKs without native code
+   (Flutter, React Native, Capacitor, JavaScript, Unity, .NET, Unreal) need the app to supply the
+   referrer string, and some a persistent store: use what the guide describes, and do not write
+   native bridge code unless the user asks for it.
+4. **iOS:** by default only the pasted-link flow: a paste button the user designs into
+   onboarding, passing the text to `redeemPastedLink`. Never read the clipboard yourself.
+5. **Probabilistic matching (iOS): never enable it on your own initiative.** Only on an explicit
+   request, after telling the user that Apple's rules forbid it, that the App Review and legal
+   risk is theirs, that it can hand one person another person's link, and that the service they
+   use may not offer it. It also needs a per-link permission in the dashboard.
+6. If the app must ask for consent before reading the install referrer, leave the option off
+   and call the guide's `enableDeferredLinks` after consent. Tell the user that their privacy
+   policy and store data forms are affected; the guides say how.
+7. Treat a deferred link like any other in the route handler (step 4d); it is marked
+   `isDeferred`. Grant nothing on a link marked `isProbabilisticMatch`.
+
 **Fallbacks by country** (sending visitors from one country to a different store or page) are a
 dashboard setting (**Setup** tab, **Fallbacks by country**, also available per link). They act
 in the browser before the app opens; there is no SDK code for them. If the user asks, point
@@ -410,7 +458,8 @@ End with a short report:
     bar), with the app closed, in the background and in the foreground, and signed out if the
     app has sign-in; on Android check `adb shell pm get-app-links <package>` shows `verified`.
     Offer the scenarios from [reference/manual-test-plan.md](reference/manual-test-plan.md).
-- **Limits:** deferred deep linking is not supported; the SDK's maturity note from step 2; any
-  place where the guide and the installed SDK disagreed.
+- **Limits:** deferred deep linking is off unless it was asked for, and unverified on devices
+  either way (iOS has no automatic way); the SDK's maturity note from step 2; any place where
+  the guide and the installed SDK disagreed.
 
 Do not commit. Offer to, if the user wants.

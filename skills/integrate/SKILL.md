@@ -52,6 +52,7 @@ message. Do not guess any of them.
 | Value                                                    | Where it comes from                                                                                                                                           |
 | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Link host, e.g. `my-app.strybok.link`                    | Strybok dashboard: the application's **Setup** tab, **Link hostname**. Ask the user.                                                                          |
+| Custom domain, e.g. `go.example.com` (only if any)       | Setup tab, **Custom domain**. Use it only when its status is `active`; ask the user whether it is.                                                            |
 | API base URL                                             | `https://api.strybok.com` unless the user names another one.                                                                                                  |
 | iOS bundle identifier                                    | Project: `PRODUCT_BUNDLE_IDENTIFIER` in `project.pbxproj`, `ios.bundleIdentifier` in `app.json`, `ApplicationId` in a MAUI `.csproj`, Unity Player Settings.  |
 | Apple Team ID (10 characters)                            | Project: `DEVELOPMENT_TEAM` in `project.pbxproj` if set; otherwise ask.                                                                                       |
@@ -82,11 +83,16 @@ curl -fsS -H "Authorization: Bearer $NAME_THE_USER_GAVE" \
 The answer contains:
 
 - `hostname`: the link host;
+- `allowedHosts`: the link host plus every **active** custom domain; `customDomains` lists all
+  of them with their status, `linkHostname` the host new link URLs use;
 - `ios` and `android`: each with `status` (`configured` or `incomplete`), `missing` (which
   identifiers are not set yet: `iosTeamId`, `iosBundleId`, `androidPackageName`,
   `androidSha256Fingerprints`), `associationUrl` and `associationFile`;
 - `snippets`: `iosAssociatedDomainsEntitlement`, `androidManifestIntentFilter`,
   `androidVerifyCommands`, and for Flutter `iosInfoPlistFlutter` and `androidManifestFlutter`;
+- `parameterLinks`: `{ "payloadKeys": [...] }` while the owner has switched on links without an
+  API call (path links, Firebase long links), otherwise `null`: the value of the SDK option of
+  the same name (see "Optional: links without an API call" below);
 - `osVerification`: always `not_checked`. `configured` only means the association file can be
   generated; it never means the OS verified it.
 
@@ -176,7 +182,7 @@ No SDK has been verified on physical devices yet. On top of that:
 | React Native / Expo  | Unit tests with a fake `Linking` module; never run inside a real React Native or Expo app. The Expo Router snippet is a sketch.                                                                | yes                          | from 0.3.0; the app supplies referrer, pasted text, store |
 | Capacitor            | Unit tests with fake plugins; never run inside a real Capacitor app.                                                                                                                           | yes                          | from 0.3.0; the app supplies referrer, pasted text, store |
 | JavaScript core      | Unit tests; you must supply the `LinkSource` for the runtime.                                                                                                                                  | yes                          | from 0.3.0; the app supplies referrer, pasted text, store |
-| **Unity**            | **Experimental.** Edit Mode tests only; not run on a device or simulator, not run on Unity 2021.3 / 2022.3; installed from a git URL, not from a registry.                                     | yes (0.2.0)                  | from 0.3.0; the app supplies the referrer and pasted text |
+| **Unity**            | **Experimental.** Edit Mode tests only; not run on a device or simulator, not run on Unity 2021.3 / 2022.3; installed from OpenUPM or a git URL.                                               | yes (0.2.0)                  | from 0.3.0; the app supplies the referrer and pasted text |
 | **.NET MAUI**        | **Experimental.** The core library is tested; the MAUI glue has only been compiled, never run inside a MAUI app, and the guide's code samples were not compiled.                               | yes (0.2.0)                  | from 0.3.0; the app supplies the referrer and pasted text |
 | **Unreal Engine**    | **Experimental.** Never compiled with Unreal Build Tool and never run on a device; only the engine-independent core is tested. Expect compile errors; the guide ends with a "Known gaps" list. | yes (0.2.0), uncompiled      | from 0.3.0, uncompiled; the game supplies both from C++   |
 
@@ -259,6 +265,13 @@ path, the exact host.
   `AppDelegate`; the guide has the code. Native iOS apps forward what the system gives them to
   the SDK (`handleâ€¦`), as the guide shows for UIKit and SwiftUI.
 
+**Custom domain.** If the application has an **active** custom domain, every place above and
+below gets it next to the link host: a second `applinks:` entry, a second `<data>` host in the
+same intent filter, and both hosts in the SDK's `allowedHosts`. Never declare a custom domain
+that is not active yet: on Android 11 and lower one host that fails verification turns App Links
+off for all hosts of the app. Tell the user to make the domain primary in the dashboard only after
+this app version is released.
+
 **Android: App Links intent filter.** Inside the launcher `<activity>` of the app module's
 `AndroidManifest.xml`, add an `<intent-filter android:autoVerify="true">` with action `VIEW`,
 categories `DEFAULT` and `BROWSABLE`, and `<data android:scheme="https" android:host="<link host>" />`.
@@ -296,7 +309,8 @@ delegate; the `Application` class and the launcher activity; `MauiProgram.cs`; â
   configuration (an env/config module, `--dart-define`, build config fields) if it has one;
   otherwise plain constants are fine: neither value is a secret;
 - an error callback (`onError` or the platform's equivalent) that goes to the project's own
-  logger, not to the user interface.
+  logger, not to the user interface;
+- `parameterLinks` only when the owner uses links without an API call (below).
 
 Do not create an instance per screen, and do not add a second listener for the same links with
 another deep link library: that navigates twice. If the app already handles other deep links
@@ -387,6 +401,25 @@ links tapped before the app is installed in [reference/android.md](reference/and
    policy and store data forms are affected; the guides say how.
 7. Treat a deferred link like any other in the route handler (step 4d); it is marked
    `isDeferred`. Grant nothing on a link marked `isProbabilisticMatch`.
+
+## Optional: links without an API call
+
+Do this only when the owner uses path links or Firebase long links (the dashboard's **Setup** tab,
+section **Links without an API call**; `parameterLinks` in the integration answer is not `null`),
+for example when the user is moving off Firebase Dynamic Links. The owner configures the routes
+and the payload keys in the dashboard; you do not change the dashboard.
+
+1. Check that the installed SDK has the option: native iOS, native Android and Kotlin
+   Multiplatform from 0.5.0, every other SDK from 0.4.0. Older versions open the app but drop
+   these links (only one-segment links such as `/promo` arrive, without payload): say so.
+2. Pass the owner's payload keys, in the dashboard's order, as the SDK's `parameterLinks` option,
+   exactly as the guide's "Links without an API call" section shows. The SDK sends Strybok only
+   those query keys; never add other keys, and never keys that could carry personal data.
+3. The links arrive through the same listener as every link, with `routePath` (the route the
+   server read, for example `/product/42`) and a `payload` of strings: handle them in step 4d's
+   route table like any other route, treating the values as untrusted input.
+4. Tell the user that the keys are compiled into the app: when the owner changes them, the app
+   needs a release before new keys arrive. Deferred links are not offered for these links.
 
 **Fallbacks by country** (sending visitors from one country to a different store or page) are a
 dashboard setting (**Setup** tab, **Fallbacks by country**, also available per link). They act

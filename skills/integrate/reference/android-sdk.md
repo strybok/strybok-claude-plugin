@@ -4,9 +4,13 @@ The `com.strybok.sdk` library receives verified HTTPS links (Android App Links) 
 Activity, asks the Strybok API which in-app route a link stands for, and hands your app each
 link exactly once.
 
-> **Status:** early release (0.4.x), published on Maven Central. Covered by JVM unit tests, and
+> **Status:** early release (0.5.x), published on Maven Central. Covered by JVM unit tests, and
 > a sample app using it compiles (Kotlin and Java, including an R8 release build). Not yet
 > verified on a physical device or emulator (see the [manual test plan](./manual-test-plan.md)).
+>
+> Links without an API call (path links and Firebase long links) are **optional and off by
+> default** (`StrybokConfig.parameterLinks`, new in 0.5.0) and unit-tested only; see
+> [Links without an API call](#11-links-without-an-api-call-optional).
 >
 > Restoring a link that was tapped before the app was installed ("deferred links") is
 > **optional and off by default**, and has not run on a device or against a real store; see
@@ -20,6 +24,7 @@ SDKs is described in the [SDK contract](./sdk-contract.md).
 1. Create an application in Strybok with your Android package name and certificate fingerprints.
 2. Read its setup data: `GET /v1/apps/:appId/integration` returns the managed hostname
    (for example `my-app.strybok.link`) and ready-to-copy snippets.
+   If the application has an active [custom domain](./ios.md#custom-domain-optional), the same answer lists it in `allowedHosts`: declare it in the entitlement and the intent filter next to the managed hostname and pass both to `allowedHosts`.
 3. Complete the [Android App Links setup](./android.md) so that
    `https://my-app.strybok.link/.well-known/assetlinks.json` lists your app. Without it Android
    never delivers links to the app, and the SDK has nothing to receive.
@@ -32,7 +37,7 @@ The library is on Maven Central. In `app/build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.strybok:strybok-android:0.4.0")
+    implementation("com.strybok:strybok-android:0.5.0")
 }
 ```
 
@@ -277,20 +282,21 @@ Listeners and callbacks run on the main thread unless you set `callbackExecutor`
 | `getInitialLink()`                       | Suspends; the launch link, if not delivered yet. Also `getInitialLink(callback)`.                                                                       |
 | `awaitStarted()`                         | Suspends until the launch link was resolved or has failed.                                                                                              |
 | `resolve(url)`                           | Suspends; resolve a URL explicitly (QR scanner). Does not emit on `links` or report an app open. Also `resolve(uri: Uri)` and `resolve(url, callback)`. |
-| `isStrybokUrl(url)`                      | Whether a URL is one of this app's links.                                                                                                               |
+| `isStrybokUrl(url)`                      | Whether a URL is one of this app's links (with `parameterLinks` also path links and Firebase long links).                                               |
 | `createLink(routePath, …)`               | Suspends; makes a short link to a screen of the app. See [Create a link to share](#9-create-a-link-to-share).                                           |
 | `enableDeferredLinks()`                  | Switch deferred links on later, for example after a consent screen; the check then runs once.                                                           |
 | `deferredLinkStatus`                     | Where the deferred-link check stands. Also `deferredLinkStatuses` (a `StateFlow`) and `addDeferredLinkStatusListener`.                                  |
 | `stop()`                                 | Stop for good; nothing is delivered afterwards. Not needed for a process-wide instance.                                                                 |
-| `Strybok.SDK_VERSION`                    | `"0.4.0"`.                                                                                                                                              |
+| `Strybok.SDK_VERSION`                    | `"0.5.0"`.                                                                                                                                              |
 
 `StrybokConfig` options: `timeoutMillis` (5000 per attempt), `maxRetries` (2; only timeouts,
 network errors and 5xx are retried — resolving is an idempotent GET), `retryDelayMillis` (400,
 doubles per retry), `dedupeWindowMillis` (2000), `reportAppOpens` (`true`), `onError`,
 `clientKey` (only for `createLink`), `attestation` and `integrityTokenProvider` (only for
 `createLink`, see [Extra protection](#extra-protection)), `deferredLinks` and
-`installReferrerSources` (see [Deferred links](#10-deferred-links-optional)), plus `transport`
-and `callbackExecutor` for tests and custom HTTP stacks.
+`installReferrerSources` (see [Deferred links](#10-deferred-links-optional)), `parameterLinks`
+(see [Links without an API call](#11-links-without-an-api-call-optional)), plus `transport` and
+`callbackExecutor` for tests and custom HTTP stacks.
 
 ### Errors
 
@@ -299,12 +305,12 @@ and `callbackExecutor` for tests and custom HTTP stacks.
 errors that only `createLink` throws (see [Create a link to share](#9-create-a-link-to-share));
 they never reach `onError`.
 
-| Type                                                  | Meaning                                                                                                                                        |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UnsupportedLinkException`                            | Not `https`, host not in `allowedHosts`, or not a single-slug path. Thrown by `resolve` before any network call. Ignored silently for intents. |
-| `LinkNotFoundException`                               | Unknown, disabled or expired link (404).                                                                                                       |
-| `StrybokTimeoutException` / `StrybokNetworkException` | No answer after all retries (e.g. offline). The app keeps working; the link is simply not opened. `cause` holds the transport error.           |
-| `StrybokServerException`                              | Unexpected status or malformed response; see `statusCode`.                                                                                     |
+| Type                                                  | Meaning                                                                                                                                                                                                      |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `UnsupportedLinkException`                            | Not `https`, host not in `allowedHosts`, or not a single-slug path (with `parameterLinks`: neither a route path nor a long link). Thrown by `resolve` before any network call. Ignored silently for intents. |
+| `LinkNotFoundException`                               | Unknown, disabled or expired link (404).                                                                                                                                                                     |
+| `StrybokTimeoutException` / `StrybokNetworkException` | No answer after all retries (e.g. offline). The app keeps working; the link is simply not opened. `cause` holds the transport error.                                                                         |
+| `StrybokServerException`                              | Unexpected status or malformed response; see `statusCode`.                                                                                                                                                   |
 
 ```kotlin
 when (error) {
@@ -340,7 +346,11 @@ ignored. Disable it with `reportAppOpens = false`.
 
 Only the link's host and slug are sent to `resolve`, plus the five `utm_*` campaign parameters of
 the tapped URL when they are valid (see below); every other query parameter and the fragment
-stay on the device. `createLink` sends the client key and what you pass to it (route, payload, title,
+stay on the device. With `parameterLinks`, `resolve` also gets the path of a path link and the
+values of the payload keys you configured, or for a Firebase long link the deep link's scheme,
+host and path, its values of those keys and the `apn` and `ibi` parameters (see
+[Links without an API call](#11-links-without-an-api-call-optional)); do not configure keys that
+carry personal data. `createLink` sends the client key and what you pass to it (route, payload, title,
 description, image URL), and only when your app calls it. With `deferredLinks` switched on, the
 SDK also reads the store's install referrer and sends the code found in it, your package name
 and the SDK version, at most three times in the life of an installation (see
@@ -546,7 +556,7 @@ without Google Play uses the same artifact and simply does not switch this on.
 ```kotlin
 // build.gradle.kts of the app
 dependencies {
-    implementation("com.strybok:strybok-android:0.4.0")
+    implementation("com.strybok:strybok-android:0.5.0")
     implementation("com.google.android.play:integrity:1.4.0") // or newer; not pulled in by the SDK
 }
 ```
@@ -802,6 +812,66 @@ The state lives in the app's storage, so this needs an instrumented test (or Rob
 - **None of it has run on a device.** The calls into Google's and Samsung's libraries compile
   against them and are otherwise untested; the AppGallery query is tested against a fake
   cursor.
+
+## 11. Links without an API call (optional)
+
+The owner of the application can let addresses of its hosts open a route of the app without
+creating a link first (dashboard: **Setup → Links without an API call**, off by default):
+**path links** such as `https://my-app.strybok.link/product/42?id=7`, and **Firebase long links**
+`https://my-app.strybok.link/?link=https://example.com/product/42&apn=…`. The intent filter of
+section 3 declares the whole host, so Android hands these links to the app like any other. The
+SDK delivers them only with `StrybokConfig.parameterLinks`, new in 0.5.0. Without it, and in
+earlier versions, a path of several segments and a long link are ignored without a request, and
+a one-segment path is delivered without its payload.
+
+Copy the keys from `parameterLinks` of the integration guide (`GET /v1/apps/:appId/integration`,
+shown on the dashboard's setup screen). It is `null` while both kinds are off; then leave the
+option out.
+
+```kotlin
+val strybok = Strybok(
+    StrybokConfig(
+        apiBaseUrl = "https://api.strybok.com",
+        allowedHosts = setOf("my-app.strybok.link"),
+        parameterLinks = ParameterLinks(payloadKeys = listOf("id", "lang")),
+    ),
+)
+
+strybok.links.collect { link ->
+    // Tapped: https://my-app.strybok.link/product/42?id=7&lang=uk
+    // link.routePath == "/product/42" and link.payload == mapOf("id" to "7", "lang" to "uk"),
+    // as the service read them.
+    navigate(link.routePath)
+}
+```
+
+Java: `new StrybokConfig.Builder(…).parameterLinks(new ParameterLinks(Arrays.asList("id", "lang"))).build()`.
+
+- **What arrives.** A link like any other, on `links`, a listener or from `getInitialLink()`,
+  with the route and payload the service read — never the tapped path. Treat them as untrusted,
+  as for every link. The `app_open` event carries the `linkId` the service returned.
+- **What is sent.** The path exactly as received, the first value of each payload key (kept when
+  it is 1–256 characters without control characters) and the `utm_*` values; for a long link the
+  deep link's scheme, host and path with its own values of the payload keys, plus `apn` and
+  `ibi`. Nothing else of the query — not `afl`, `ifl`, `ofl`, `st`, `sd`, `si` or `isi` — and
+  never the fragment. The SDK reads the URL string as the intent carried it; it never decodes or
+  normalises the path.
+- **Which addresses count.** Any address of `allowedHosts` whose path is a valid route (no `//`,
+  no `.` or `..` segment, not `/favicon.ico`, `/robots.txt` or anything under `/.well-known/`) is
+  resolved. Whether a route is allowed is the service's decision, so `onError` gets a
+  `LinkNotFoundException` for an address that is no link, a typo for example.
+- **The keys are compiled in.** Installed builds keep sending the keys they know, and the service
+  ignores keys it no longer allows: a key the owner adds reaches users with your next release.
+  An invalid list — more than 20 keys, a key twice, a key that is not 1–40 characters of
+  `A–Z a–z 0–9 _ . -`, starts with `utm_` or is `st`, `sd`, `si` or `strybok_click` — makes
+  `StrybokConfig` throw an `IllegalArgumentException`.
+- **Deferred links do not change.** They exist only for links created in advance, so a restored
+  link still has a single slug.
+
+The exact rules are in the
+[SDK contract](./sdk-contract.md#links-without-an-api-call). This is covered by JVM unit tests
+against the shared test vectors of the contract only; it has not run on a device, an emulator or
+against the production API.
 
 ## Troubleshooting
 

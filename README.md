@@ -60,7 +60,7 @@ links to this app" or "replace Firebase Dynamic Links with Strybok".
 Have these ready (the skill asks for what it cannot find in the project):
 
 - the link hostname of your application, from the **Setup** tab in the Strybok dashboard
-  (`<name>.strybok.link`);
+  (`<name>.strybok.link`), and its custom domain if it has an active one;
 - for iOS: the Apple Team ID and the bundle identifier;
 - for Android: the package name and the SHA-256 fingerprints of your signing certificates
   (for a Play release, the App signing key certificate from Play Console).

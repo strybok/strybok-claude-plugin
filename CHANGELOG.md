@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- Links without an API call: the skill reads `parameterLinks` from the integration answer and,
+  when the owner uses path links or Firebase long links, passes the payload keys to the SDK's new
+  `parameterLinks` option (native iOS, native Android and Kotlin Multiplatform 0.5.0, the other
+  SDKs 0.4.0). Reference guides refreshed to those versions. Unit-tested SDKs only; nothing has
+  run on a device.
+- Custom domains: the skill asks whether the application has an **active** custom domain (for
+  example `go.example.com`) and, if so, declares it next to the link host in the entitlement, the
+  intent filter and `allowedHosts`, never one that is not active yet. Reading the setup data from
+  the API mentions the new `allowedHosts`, `customDomains` and `linkHostname` fields. Custom
+  domains were tried end to end with one real domain; not yet on a device.
+
 ## 0.2.0
 
 - Reference guides refreshed to the current SDKs: JavaScript, React Native, Capacitor, Flutter,
